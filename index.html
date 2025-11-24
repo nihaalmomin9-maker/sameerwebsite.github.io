@@ -483,6 +483,8 @@
   }
 </style>
 <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+
+<!-- Firebase (module) -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
@@ -499,7 +501,11 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  window._db = db; // expose globally so your other script can use it
+  // Expose Firestore + helpers globally for the main script
+  window._db = db;
+  window._doc = doc;
+  window._getDoc = getDoc;
+  window._setDoc = setDoc; // expose globally so your other script can use them
 </script>
 </head>
 <body>
@@ -730,6 +736,7 @@
     rightPanel.appendChild(subtopicList);
   }
 
+  // SHOW SUBTOPIC CONTENT (now async for Firestore)
   async function showSubcontent(topicIdx, subIdx) {
     currentTopicIndex = topicIdx;
     currentSubtopicIndex = subIdx;
@@ -745,14 +752,18 @@
     subtopicHeader.textContent = subtopicName;
     rightPanel.appendChild(subtopicHeader);
 
-const ref = doc(window._db, "notes", `${topic.name}-${subtopicName}`);
-const snap = await getDoc(ref);
+    // Load from Firestore
+    let savedContent = "<p>Write your notes here...</p>";
+    try {
+      const ref = window._doc(window._db, "notes", `${topic.name}-${subtopicName}`);
+      const snap = await window._getDoc(ref);
 
-let savedContent = "<p>Write your notes here...</p>";
-
-if (snap.exists()) {
-  savedContent = snap.data().content;
-}
+      if (snap.exists()) {
+        savedContent = snap.data().content;
+      }
+    } catch (e) {
+      console.error("Error loading from Firestore:", e);
+    }
 
     if (editingUnlocked) {
         // Create Quill editor structure
@@ -805,29 +816,28 @@ if (snap.exists()) {
         `;
         saveIcon.style.display = 'block'; // Always show when in editing mode
 
-saveIcon.onclick = async () => {
-  if (quillEditor) {
-    const htmlContent = quillEditor.root.innerHTML;
+        // SAVE BUTTON LOGIC (Firestore)
+        saveIcon.onclick = async () => {
+          if (quillEditor) {
+            const htmlContent = quillEditor.root.innerHTML;
 
-    // SAVE to Firestore instead of localStorage
-    await setDoc(
-      doc(window._db, "notes", `${topic.name}-${subtopicName}`),
-      { content: htmlContent }
-    );
-  }
+            try {
+              await window._setDoc(
+                window._doc(window._db, "notes", `${topic.name}-${subtopicName}`),
+                { content: htmlContent }
+              );
+            } catch (e) {
+              console.error("Error saving to Firestore:", e);
+            }
+          }
 
-  // Visual save feedback
-  saveIcon.style.fill = 'blue';
-  setTimeout(() => {
-    saveIcon.style.fill = 'var(--accent-green)';
-  }, 500);
-};
-
+          // Visual feedback
           saveIcon.style.fill = 'blue';
           setTimeout(() => {
             saveIcon.style.fill = 'var(--accent-green)';
           }, 500);
         };
+
         editorContainer.appendChild(saveIcon); // Append to the editorContainer
 
         // Initialize Quill editor
@@ -866,7 +876,7 @@ saveIcon.onclick = async () => {
     }
   }
 
-  // RENAME/REMOVE/ADD functions (No changes needed here from previous version)
+  // RENAME/REMOVE/ADD functions
   function renameTopic(topicIdx){
     if(!editingUnlocked){
       alert('Unlock editing first!');
@@ -1096,6 +1106,8 @@ saveIcon.onclick = async () => {
     // Re-show the current content to trigger Quill init/destroy logic correctly
     if (currentTopicIndex !== null && currentSubtopicIndex !== null) {
         showSubcontent(currentTopicIndex, currentSubtopicIndex);
+    } else if (currentTopicIndex !== null) {
+        loadTopic(currentTopicIndex);
     } else {
         // If no subtopic is selected, ensure Quill is null
         quillEditor = null;
@@ -1116,7 +1128,6 @@ saveIcon.onclick = async () => {
           e.preventDefault();
       }
   });
-
 
   // Initialization
   function init() {
